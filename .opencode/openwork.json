@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "workspace": {
+    "name": "the-doctor",
+    "createdAt": 1780347653528,
+    "preset": "starter"
+  },
+  "authorizedRoots": [
+    "/Users/asadpreuss-dodhy/Documents/Development/the-doctor"
+  ],
+  "reload": null
+}

@@ -1,0 +1,16 @@
+{
+  "name": "the-doctor-whatsapp",
+  "version": "0.1.0",
+  "description": "WhatsApp voice note listener for The Doctor",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node listener.mjs",
+    "login": "node listener.mjs --login"
+  },
+  "dependencies": {
+    "whatsapp-web.js": "^1.26.0",
+    "qrcode-terminal": "^0.12.0",
+    "dotenv": "^16.4.7"
+  }
+}
