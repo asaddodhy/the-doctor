@@ -24,8 +24,8 @@ cat AGENT_QA.md
 | Setting | Value |
 |---------|-------|
 | **Repo** | `asaddodhy/the-doctor` |
-| **Primary agent** | Michael-Macbook14 |
-| **Git identity** | `Michael-Macbook14 <michael-macbook14@my-ai-team.dev>` |
+| **Primary agent** | The-Doctor |
+| **Git identity** | `The-Doctor <the-doctor@my-ai-team.dev>` |
 
 ---
 

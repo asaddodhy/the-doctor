@@ -1,5 +1,5 @@
 ---
-description: OpenWork default agent
+description: The Doctor — health note processing agent
 mode: primary
 temperature: 0.2
 ---
