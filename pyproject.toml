@@ -1,0 +1,13 @@
+[project]
+name = "the-doctor"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.136.3",
+    "perplexity-subscription-mcp>=0.1.2",
+    "python-dotenv>=1.2.2",
+    "python-telegram-bot>=22.7",
+    "uvicorn>=0.48.0",
+]

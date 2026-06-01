@@ -1,0 +1,15 @@
+# Environment
+.env
+
+# Audio files
+data/audio/*.ogg
+data/audio/*.mp3
+data/audio/*.wav
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS
+.DS_Store
