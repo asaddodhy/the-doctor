@@ -1,5 +1,18 @@
 # Environment
 .env
+.env.test
+
+# Logs and runtime files
+logs/
+*.log
+*.pid
+
+# WhatsApp auth
+.whatsapp-auth/
+.wwebjs_cache/
+
+# Data (transcripts + health data)
+data/
 
 # Audio files
 data/audio/*.ogg

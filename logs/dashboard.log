@@ -1,6 +1,0 @@
-Starting The Doctor Dashboard (TEST MODE)...
-   Open http://localhost:9002 in your browser
-INFO:     Started server process [35523]
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:9002 (Press CTRL+C to quit)
