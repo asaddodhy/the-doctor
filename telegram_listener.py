@@ -228,19 +228,42 @@ def start_bot():
             print(f"  ✅ Transcription ({len(transcription)} chars)")
             print(f"     Preview: {transcription[:200]}...")
 
-            # Step 2: Save transcript and reply with transcription text
-            # (Health extraction disabled for now — testing transcription quality first)
+            # Step 2: Extract health data and save
             filename = f"voice_{update.message.message_id}.ogg"
-            save_results(filename, recording_time, transcription, {})
+            await update.message.reply_text("🔍 Extracting health data...")
+            extracted = extract_health_from_transcription(transcription, recording_time)
+            save_results(filename, recording_time, transcription, extracted)
 
-            # Reply with the transcription
+            # Reply with the transcription and health data
             preview = transcription[:1500]
             response = f"✅ Transcription:\n\n{preview}"
             if len(transcription) > 1500:
                 response += "\n\n*(truncated — full text saved to dashboard)*"
+
+            # Add health data summary if available
+            if extracted and "extracted_data" in extracted:
+                ed = extracted["extracted_data"]
+                summary_lines = []
+                if ed.get("blood_sugar"):
+                    summary_lines.append(f"🩸 Blood Sugar: {ed['blood_sugar']}")
+                if ed.get("meals"):
+                    summary_lines.append(f"🍽️ Meals: {ed['meals']}")
+                if ed.get("activity"):
+                    summary_lines.append(f"🚶 Activity: {ed['activity']}")
+                if ed.get("medications"):
+                    summary_lines.append(f"💊 Medications: {ed['medications']}")
+                if ed.get("symptoms"):
+                    summary_lines.append(f"🤒 Symptoms: {ed['symptoms']}")
+                if ed.get("mood"):
+                    summary_lines.append(f"😊 Mood: {ed['mood']}")
+                if summary_lines:
+                    response += f"\n\n📋 **Health Data:**\n" + "\n".join(summary_lines)
+                if extracted.get("summary"):
+                    response += f"\n\n📝 {extracted['summary']}"
+
             dashboard_port = os.getenv("DOCTOR_DASHBOARD_PORT", "9001")
             response += f"\n\n📊 Dashboard: http://localhost:{dashboard_port}"
-            await update.message.reply_text(response)
+            await update.message.reply_text(response, parse_mode="Markdown")
 
             print(f"  ✅ Voice note processed successfully")
 

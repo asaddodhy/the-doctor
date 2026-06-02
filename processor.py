@@ -153,6 +153,9 @@ def extract_health(transcription: str, recording_time: str) -> dict:
             stream=False,
         )
 
+        # Get thread UUID for cleanup
+        thread_uuid = result.get("backend_uuid") if isinstance(result, dict) else None
+
         # Parse response — result can be dict with "answer" or "text" (list of steps)
         response_text = ""
         if isinstance(result, dict):
@@ -179,6 +182,15 @@ def extract_health(transcription: str, recording_time: str) -> dict:
 
         # Try to extract JSON from response
         extracted = _try_extract_json(response_text)
+
+        # Delete the Perplexity thread to keep history clean
+        if thread_uuid:
+            try:
+                perp_client.delete_thread(thread_uuid)
+                print(f"  🗑️ Deleted Perplexity thread: {thread_uuid}")
+            except Exception as del_err:
+                print(f"  ⚠️  Failed to delete thread {thread_uuid}: {del_err}")
+
         return extracted
 
     except Exception as e:
