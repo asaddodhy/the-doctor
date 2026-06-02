@@ -1,0 +1,12 @@
+  📋 Loaded config from: .env.test
+
+============================================================
+🏥 The Doctor — Telegram Voice Listener
+============================================================
+  👥 Allowed users: 8907737065
+  🎤 Bridge script: /Users/asadpreuss-dodhy/Documents/Development/perplexity-stack/scripts/transcribe.py
+  🐍 Bridge Python: /Users/asadpreuss-dodhy/Documents/Development/perplexity-stack/perplexity-web-wrapper/.venv/bin/python3
+
+  ✅ Bot started. Listening for voice notes...
+  ============================================================
+

@@ -16,10 +16,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="$SCRIPT_DIR/logs"
 mkdir -p "$LOG_DIR"
 
+# Support test environment
+DOCTOR_ENV="${DOCTOR_ENV:-}"
+DASHBOARD_PORT="${DOCTOR_DASHBOARD_PORT:-9001}"
+
 SERVICES=(
-    "dashboard:uv run python3 dashboard/app.py:logs/dashboard.log:9001"
+    "dashboard:uv run python3 -u dashboard/app.py:logs/dashboard.log:${DASHBOARD_PORT}"
     "whatsapp:node whatsapp/listener.mjs:logs/whatsapp.log:whatsapp"
-    "telegram:uv run python3 telegram_listener.py:logs/telegram.log:telegram"
+    "telegram:uv run python3 -u telegram_listener.py:logs/telegram.log:telegram"
 )
 
 stop_all() {
@@ -63,9 +67,14 @@ status_all() {
 }
 
 start_all() {
+    MODE_LABEL="PRODUCTION"
+    if [ "$DOCTOR_ENV" = "test" ]; then
+        MODE_LABEL="TEST MODE"
+    fi
+
     echo ""
     echo "╔══════════════════════════════════════════════════════╗"
-    echo "║  The Doctor — Starting All Services                  ║"
+    echo "║  The Doctor — Starting All Services ($MODE_LABEL)   ║"
     echo "╚══════════════════════════════════════════════════════╝"
     echo ""
 
@@ -101,7 +110,7 @@ start_all() {
     echo ""
     echo "  ✅ All services started!"
     echo ""
-    echo "  📊 Dashboard: http://localhost:9001"
+    echo "  📊 Dashboard: http://localhost:${DASHBOARD_PORT}"
     echo "  📋 Logs: $LOG_DIR/"
     echo ""
     echo "  To view logs:"

@@ -1,8 +1,8 @@
 {
   "version": 1,
   "workspace": {
-    "name": "The Doctor",
-    "createdAt": 1780347653528,
+    "name": "the-doctor",
+    "createdAt": 1780383978610,
     "preset": "starter"
   },
   "authorizedRoots": [

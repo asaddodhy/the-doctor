@@ -26,7 +26,9 @@ const execFileAsync = promisify(execFile);
 
 // ── Config ──────────────────────────────────────────────────────────────
 
-config({ path: join(import.meta.dirname, "..", ".env") });
+// Load test .env.test if DOCTOR_ENV=test, otherwise load production .env
+const envFile = process.env.DOCTOR_ENV === "test" ? ".env.test" : ".env";
+config({ path: join(import.meta.dirname, "..", envFile) });
 
 const BRIDGE_SCRIPT = process.env.DOCTOR_BRIDGE_SCRIPT ||
   join(process.env.HOME, "Documents", "Development", "perplexity-stack", "scripts", "transcribe.py");

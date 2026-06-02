@@ -4,6 +4,7 @@ Simple web dashboard to view raw transcripts and extracted health data.
 """
 
 import json
+import os
 from pathlib import Path
 from string import Template
 
@@ -13,10 +14,16 @@ import uvicorn
 
 # ── Config ──────────────────────────────────────────────────────────
 DATA_DIR = Path(__file__).parent.parent / "data"
-TRANSCRIPT_FILE = DATA_DIR / "transcripts.json"
-HEALTH_DATA_FILE = DATA_DIR / "health_data.json"
 
-app = FastAPI(title="The Doctor — Dashboard")
+# Support test environment (DOCTOR_ENV=test) — use prefixed data files
+DOCTOR_ENV = os.getenv("DOCTOR_ENV", "")
+_DATA_PREFIX = "test_" if DOCTOR_ENV == "test" else ""
+TRANSCRIPT_FILE = DATA_DIR / f"{_DATA_PREFIX}transcripts.json"
+HEALTH_DATA_FILE = DATA_DIR / f"{_DATA_PREFIX}health_data.json"
+
+IS_TEST_MODE = DOCTOR_ENV == "test"
+
+app = FastAPI(title="The Doctor — Dashboard" + (" (TEST MODE)" if IS_TEST_MODE else ""))
 
 
 # ── HTML Template ───────────────────────────────────────────────────
@@ -67,6 +74,7 @@ HTML_TEMPLATE = Template("""<!DOCTYPE html>
 </head>
 <body>
     <div class="header">
+        $test_banner
         <h1>The Doctor -- Dashboard</h1>
         <p>Health tracking for audio notes -- transcripts and extracted data</p>
     </div>
@@ -203,10 +211,17 @@ async def dashboard():
     total_entries = len(health_data)
     last_update = str(transcripts[-1].get('processed_at', '')[:10]) if transcripts else "No data yet"
     
+    test_banner_html = (
+        '<div style="background: #e74c3c; color: white; padding: 0.5rem; '
+        'border-radius: 8px; margin-bottom: 1rem; font-weight: bold; '
+        'font-size: 0.9rem; display: inline-block;">🧪 TEST MODE</div>'
+    ) if IS_TEST_MODE else ""
+
     html = HTML_TEMPLATE.substitute(
         total_notes=str(total_notes),
         total_entries=str(total_entries),
         last_update=last_update,
+        test_banner=test_banner_html,
         health_table=build_health_table(health_data),
         transcript_cards=build_transcript_cards(transcripts),
     )
@@ -222,6 +237,8 @@ async def api_data():
 
 
 if __name__ == "__main__":
-    print("Starting The Doctor Dashboard...")
-    print("   Open http://localhost:9001 in your browser")
-    uvicorn.run(app, host="0.0.0.0", port=9001)
+    port = int(os.getenv("DOCTOR_DASHBOARD_PORT", "9001"))
+    mode = "TEST MODE" if IS_TEST_MODE else "Production"
+    print(f"Starting The Doctor Dashboard ({mode})...")
+    print(f"   Open http://localhost:{port} in your browser")
+    uvicorn.run(app, host="0.0.0.0", port=port)

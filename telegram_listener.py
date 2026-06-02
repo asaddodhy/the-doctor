@@ -11,15 +11,18 @@ Usage:
 Runs as a long-lived daemon alongside the dashboard.
 """
 
-import json
 import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
+
+# ffmpeg available for audio conversion
+FFMPEG = "ffmpeg"
 
 # ── Add The Doctor's root to sys.path ───────────────────────────────────
 PROJECT_ROOT = Path(__file__).parent
@@ -29,15 +32,18 @@ from processor import (
     DATA_DIR,
     HEALTH_DATA_FILE,
     TRANSCRIPT_FILE,
-    get_perplexity_client,
+    transcribe as processor_transcribe,
+    extract_health as processor_extract_health,
     load_json,
     save_json,
-    TRANSCRIPTION_PROMPT,
 )
 
 # ─── Environment ────────────────────────────────────────────────────────
 
-load_dotenv(PROJECT_ROOT / ".env")
+# Load test .env if DOCTOR_ENV=test, otherwise load production .env
+_env_file = ".env.test" if os.getenv("DOCTOR_ENV", "") == "test" else ".env"
+load_dotenv(PROJECT_ROOT / _env_file)
+print(f"  📋 Loaded config from: {_env_file}")
 BOT_TOKEN = os.getenv("DOCTOR_BOT_TOKEN", "")
 ALLOWED_USERS_STR = os.getenv("DOCTOR_ALLOWED_USERS", "")
 ALLOWED_USERS = {int(uid.strip()) for uid in ALLOWED_USERS_STR.split(",") if uid.strip()}
@@ -52,46 +58,41 @@ BRIDGE_PYTHON = os.getenv(
     str(Path.home() / "Documents" / "Development" / "perplexity-stack" / "perplexity-web-wrapper" / ".venv" / "bin" / "python3"),
 )
 
+# ─── Audio Conversion ─────────────────────────────────────────────────
+
+
+def convert_to_wav(audio_path: str) -> Optional[str]:
+    """
+    Convert audio file to WAV format using ffmpeg.
+    Perplexity's GPT-4.5 model works with WAV but not OGG (Telegram's format).
+    Returns path to converted WAV file, or None on failure.
+    """
+    wav_path = audio_path.rsplit(".", 1)[0] + "_converted.wav"
+    try:
+        result = subprocess.run(
+            [FFMPEG, "-y", "-i", audio_path, "-acodec", "pcm_s16le",
+             "-ar", "16000", "-ac", "1", wav_path],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            print(f"  ⚠️  Audio conversion failed: {result.stderr.strip()}")
+            return None
+        print(f"  🔄 Converted to WAV: {wav_path}")
+        return wav_path
+    except Exception as e:
+        print(f"  ⚠️  Audio conversion error: {e}")
+        return None
+
+
 # ─── Bridge Script Call ─────────────────────────────────────────────────
 
 
 def transcribe_audio(audio_path: str) -> Optional[str]:
     """
-    Call the existing Perplexity bridge script to transcribe an audio file.
-
-    Returns:
-        Transcription text, or None on failure.
+    Transcribe audio via the bridge script.
+    Delegates to processor.transcribe() which uses the working setup.
     """
-    if not os.path.isfile(BRIDGE_SCRIPT):
-        print(f"  ❌ Bridge script not found: {BRIDGE_SCRIPT}")
-        return None
-
-    if not os.path.isfile(BRIDGE_PYTHON):
-        print(f"  ❌ Bridge Python not found: {BRIDGE_PYTHON}")
-        return None
-
-    cmd = [BRIDGE_PYTHON, BRIDGE_SCRIPT, audio_path]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    except subprocess.TimeoutExpired:
-        print("  ❌ Bridge script timed out after 120s")
-        return None
-
-    if result.returncode != 0:
-        print(f"  ❌ Bridge script failed (exit {result.returncode}): {result.stderr.strip()}")
-        return None
-
-    try:
-        data = json.loads(result.stdout)
-        text = data.get("text", "")
-        if text:
-            return text
-        print("  ⚠️  Bridge returned empty transcription")
-        return None
-    except json.JSONDecodeError as e:
-        print(f"  ❌ Bridge output not valid JSON: {e}")
-        print(f"     stdout: {result.stdout[:200]}")
-        return None
+    return processor_transcribe(audio_path)
 
 
 # ─── Health Data Extraction from Text ───────────────────────────────────
@@ -99,71 +100,10 @@ def transcribe_audio(audio_path: str) -> Optional[str]:
 
 def extract_health_from_transcription(transcription: str, recording_time: str) -> dict:
     """
-    Send the transcription text to Perplexity for health data extraction.
-
-    Uses the same prompt template as processor.process_audio() but sends
-    text only (no audio file), with the transcription provided as context.
-
-    Returns extracted health data dict (may be empty if parsing fails).
+    Extract health data from a transcription.
+    Delegates to processor.extract_health() which uses the working setup.
     """
-    prompt = TRANSCRIPTION_PROMPT.format(recording_time=recording_time)
-    # Prepend the already-transcribed text
-    full_prompt = (
-        f"I already transcribed this audio. Here is the transcription:\n\n"
-        f"{transcription}\n\n"
-        f"---\n\n{prompt}"
-    )
-
-    print("  📤 Extracting health data from transcription...")
-    perp_client = get_perplexity_client()
-
-    try:
-        result = perp_client.search(
-            query=full_prompt,
-            mode="pro",
-            model="sonar",
-            stream=False,
-            language="en",
-        )
-
-        response_text = ""
-        if isinstance(result, dict):
-            response_text = result.get("answer", result.get("text", json.dumps(result)))
-        elif isinstance(result, str):
-            response_text = result
-        else:
-            response_text = str(result)
-
-        # Try to extract JSON from response
-        extracted = _try_extract_json(response_text)
-        return extracted
-
-    except Exception as e:
-        print(f"  ❌ Health extraction failed: {e}")
-        return {"raw_text": transcription[:500]}
-
-
-def _try_extract_json(text: str) -> dict:
-    """Try to extract JSON from Perplexity's response."""
-    import re
-
-    # Try to find JSON block
-    json_match = re.search(r"\{[^{}]*\}", text, re.DOTALL)
-    if json_match:
-        try:
-            return json.loads(json_match.group())
-        except json.JSONDecodeError:
-            pass
-
-    # Try JSON in code blocks
-    json_block = re.search(r"```(?:json)?\s*\n?(\{.*?\})\n?\s*```", text, re.DOTALL)
-    if json_block:
-        try:
-            return json.loads(json_block.group(1))
-        except json.JSONDecodeError:
-            pass
-
-    return {"raw_text": text[:500]}
+    return processor_extract_health(transcription, recording_time)
 
 
 # ─── Save Results ────────────────────────────────────────────────────────
@@ -178,7 +118,7 @@ def save_results(filename: str, recording_time: str, transcription: str, extract
         "filename": filename,
         "source": "telegram",
         "recording_time": recording_time,
-        "processed_at": __import__("datetime").datetime.now().isoformat(),
+        "processed_at": datetime.now().isoformat(),
         "transcription": transcription,
     }
     transcripts.append(transcript_entry)
@@ -196,7 +136,7 @@ def save_results(filename: str, recording_time: str, transcription: str, extract
             "id": len(entries) + 1,
             "source": "telegram",
             "recording_time": recording_time,
-            "processed_at": __import__("datetime").datetime.now().isoformat(),
+            "processed_at": datetime.now().isoformat(),
             **extracted.get("extracted_data", {}),
             "summary": extracted.get("summary", ""),
             "raw_transcript": extracted.get("raw_transcript_english", transcription),
@@ -272,9 +212,13 @@ def start_bot():
 
             print(f"  💾 Downloaded to: {tmp_path} ({os.path.getsize(tmp_path)} bytes)")
 
+            # Step 0: Convert OGG to WAV (Perplexity GPT-4.5 doesn't support OGG)
+            wav_path = convert_to_wav(tmp_path)
+            audio_for_transcription = wav_path if wav_path else tmp_path
+
             # Step 1: Transcribe via bridge script
             await update.message.reply_text("🎤 Transcribing audio...")
-            transcription = transcribe_audio(tmp_path)
+            transcription = transcribe_audio(audio_for_transcription)
 
             if not transcription:
                 await update.message.reply_text("❌ Transcription failed. Check server logs.")
@@ -282,22 +226,20 @@ def start_bot():
                 return
 
             print(f"  ✅ Transcription ({len(transcription)} chars)")
-            print(f"     Preview: {transcription[:100]}...")
+            print(f"     Preview: {transcription[:200]}...")
 
-            # Step 2: Extract health data
-            await update.message.reply_text("🏥 Extracting health data...")
-            extracted = extract_health_from_transcription(transcription, recording_time)
-
-            # Step 3: Save results
+            # Step 2: Save transcript and reply with transcription text
+            # (Health extraction disabled for now — testing transcription quality first)
             filename = f"voice_{update.message.message_id}.ogg"
-            save_results(filename, recording_time, transcription, extracted)
+            save_results(filename, recording_time, transcription, {})
 
-            # Step 4: Respond
-            summary = extracted.get("summary", "") if isinstance(extracted, dict) else ""
-            response = "✅ Done!\n\n"
-            if summary:
-                response += f"📋 {summary}\n\n"
-            response += f"📊 Dashboard: http://localhost:9001"
+            # Reply with the transcription
+            preview = transcription[:1500]
+            response = f"✅ Transcription:\n\n{preview}"
+            if len(transcription) > 1500:
+                response += "\n\n*(truncated — full text saved to dashboard)*"
+            dashboard_port = os.getenv("DOCTOR_DASHBOARD_PORT", "9001")
+            response += f"\n\n📊 Dashboard: http://localhost:{dashboard_port}"
             await update.message.reply_text(response)
 
             print(f"  ✅ Voice note processed successfully")
@@ -309,6 +251,8 @@ def start_bot():
         finally:
             if "tmp_path" in locals():
                 cleanup(tmp_path)
+            if "wav_path" in locals() and wav_path:
+                cleanup(wav_path)
 
     def cleanup(path):
         """Remove temp file."""
