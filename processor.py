@@ -68,7 +68,8 @@ def transcribe(audio_path: str) -> Optional[str]:
 
 
 def _transcribe_with_groq(audio_path: str) -> Optional[str]:
-    """Transcribe via Groq Whisper API (multipart/form-data POST)."""
+    """Transcribe via Groq Whisper API (multipart/form-data POST).
+    Errors are displayed to the user — no silent fallback."""
     if not os.path.isfile(audio_path):
         print(f"  ❌ Audio file not found: {audio_path}")
         return None
@@ -77,8 +78,8 @@ def _transcribe_with_groq(audio_path: str) -> Optional[str]:
     try:
         import requests
     except ImportError:
-        print("  ⚠️  requests not installed, falling back to bridge script")
-        return _transcribe_with_bridge(audio_path)
+        print("  ❌ requests library not installed. Run: uv add requests")
+        return None
 
     try:
         with open(audio_path, "rb") as f:
