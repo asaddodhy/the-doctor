@@ -4,7 +4,7 @@
 > 1. Read and understand the code + pipeline below
 > 2. Fix bugs if they arise
 > 3. Improve the extraction prompt or add new medical fields as Asad requests
-> 4. Keep the Perplexity API server running (port 8766)
+> 4. Keep the Perplexity API server running (port 8001)
 >
 > If you're unsure about any part of the pipeline, read `processor.py` and `telegram_listener.py` first before making changes.
 >
@@ -53,7 +53,7 @@ The Doctor receives audio notes (Urdu/Hindi) from Asad's father via Telegram/Wha
 ```
 Telegram voice message
   → Groq Whisper API (whisper-large-v3) — transcribes audio to text
-    → Perplexity API server (localhost:8766) — extracts medical data as JSON
+    → Perplexity API server (localhost:8001) — extracts medical data as JSON
       → Save to data/transcripts.json + data/health_data.json
         → Reply to Telegram user with structured summary
           → Auto-delete Perplexity thread (cleanup)
@@ -64,7 +64,7 @@ Telegram voice message
 | Component | What it does | How to check |
 |-----------|-------------|--------------|
 | **Groq Whisper** | STT — transcribes audio (OGG direct, no conversion needed) | `curl https://api.groq.com/openai/v1/audio/transcriptions` |
-| **Perplexity API server** | FastAPI wrapper on port 8766 — queries Perplexity AI via web API | `lsof -ti:8766` to check if running |
+| **Perplexity API server** | FastAPI wrapper on port 8001 — queries Perplexity AI via web API | `lsof -ti:8001` to check if running |
 | **processor.py** | `transcribe()` + `extract_health()` — core pipeline functions | Main entry point for audio processing |
 | **telegram_listener.py** | Telegram bot daemon — receives voice, runs pipeline, replies | Runs as part of `start-all.sh` |
 
@@ -85,7 +85,7 @@ DOCTOR_ENV=test ./start-all.sh start
 
 ```
 GROQ_API_KEY=gsk_...                    # Groq Whisper STT
-PERPLEXITY_API_URL=http://127.0.0.1:8766  # Local Perplexity API server
+PERPLEXITY_API_URL=http://127.0.0.1:8001  # Local Perplexity API server
 DOCTOR_BOT_TOKEN=...                     # Telegram bot token
 DOCTOR_ALLOWED_USERS=...                 # Authorized Telegram user IDs
 ```

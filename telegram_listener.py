@@ -135,8 +135,7 @@ def start_bot():
     else:
         print("  ⚠️  No allowed users configured — anyone with the bot token can send messages")
 
-    print(f"  🎤 Bridge script: {BRIDGE_SCRIPT}")
-    print(f"  🐍 Bridge Python: {BRIDGE_PYTHON}")
+    print()
     print()
 
     app = Application.builder().token(BOT_TOKEN).build()

@@ -26,8 +26,8 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_API_URL = os.getenv("GROQ_API_URL", "https://api.groq.com/openai/v1/audio/transcriptions")
 GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3")
 
-# Perplexity API server (local FastAPI server on port 8766)
-PERPLEXITY_API_URL = os.getenv("PERPLEXITY_API_URL", "http://127.0.0.1:8766")
+# Perplexity API server (local FastAPI server on port 8001)
+PERPLEXITY_API_URL = os.getenv("PERPLEXITY_API_URL", "http://127.0.0.1:8001")
 
 # Bridge script (fallback)
 BRIDGE_SCRIPT = os.getenv(
