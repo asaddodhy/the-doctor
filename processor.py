@@ -69,7 +69,7 @@ def transcribe(audio_path: str) -> Optional[str]:
 
 def _transcribe_with_groq(audio_path: str) -> Optional[str]:
     """Transcribe via Groq Whisper API (multipart/form-data POST).
-    Falls back to bridge script on any failure."""
+    Errors are displayed to the user — no silent fallback."""
     if not os.path.isfile(audio_path):
         print(f"  ❌ Audio file not found: {audio_path}")
         return None
@@ -78,8 +78,8 @@ def _transcribe_with_groq(audio_path: str) -> Optional[str]:
     try:
         import requests
     except ImportError:
-        print("  ⚠️  requests not installed, falling back to bridge script")
-        return _transcribe_with_bridge(audio_path)
+        print("  ❌ requests library not installed. Run: uv add requests")
+        return None
 
     try:
         with open(audio_path, "rb") as f:
@@ -96,8 +96,8 @@ def _transcribe_with_groq(audio_path: str) -> Optional[str]:
             )
 
         if resp.status_code != 200:
-            print(f"  ❌ Groq API error (HTTP {resp.status_code}), falling back to bridge script...")
-            return _transcribe_with_bridge(audio_path)
+            print(f"  ❌ Groq API error (HTTP {resp.status_code}): {resp.text[:200]}")
+            return None
 
         result = resp.json()
         text = result.get("text", "").strip()
@@ -105,12 +105,12 @@ def _transcribe_with_groq(audio_path: str) -> Optional[str]:
             print(f"  ✅ Groq transcription ({len(text)} chars)")
             return text
         else:
-            print("  ⚠️  Groq returned empty transcription, falling back to bridge script...")
-            return _transcribe_with_bridge(audio_path)
+            print("  ⚠️  Groq returned empty transcription")
+            return None
 
     except Exception as e:
-        print(f"  ❌ Groq transcription error: {e}, falling back to bridge script...")
-        return _transcribe_with_bridge(audio_path)
+        print(f"  ❌ Groq transcription error: {e}")
+        return None
 
 
 def _transcribe_with_bridge(audio_path: str) -> Optional[str]:
