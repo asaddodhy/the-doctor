@@ -1,6 +1,6 @@
 """
 The Doctor — Dashboard
-Simple web dashboard to view raw transcripts and extracted health data.
+Simple web dashboard to view raw transcripts with Urdu/English translations.
 """
 
 import json
@@ -19,7 +19,6 @@ DATA_DIR = Path(__file__).parent.parent / "data"
 DOCTOR_ENV = os.getenv("DOCTOR_ENV", "")
 _DATA_PREFIX = "test_" if DOCTOR_ENV == "test" else ""
 TRANSCRIPT_FILE = DATA_DIR / f"{_DATA_PREFIX}transcripts.json"
-HEALTH_DATA_FILE = DATA_DIR / f"{_DATA_PREFIX}health_data.json"
 
 IS_TEST_MODE = DOCTOR_ENV == "test"
 
@@ -48,17 +47,6 @@ HTML_TEMPLATE = Template("""<!DOCTYPE html>
         .stat-card .number { font-size: 2rem; font-weight: bold; color: #0f3460; }
         .stat-card .label { font-size: 0.85rem; color: #666; margin-top: 0.3rem; }
         .container { max-width: 1200px; margin: 0 auto; padding: 1.5rem; }
-        .tab-bar { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
-        .tab { padding: 0.6rem 1.5rem; border: none; border-radius: 8px;
-               cursor: pointer; font-size: 0.9rem; background: #ddd; }
-        .tab.active { background: #0f3460; color: white; }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-        table { width: 100%; border-collapse: collapse; background: white;
-                border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-        th, td { padding: 0.8rem; text-align: left; border-bottom: 1px solid #eee; font-size: 0.85rem; }
-        th { background: #f8f9fa; font-weight: 600; position: sticky; top: 0; }
-        tr:hover { background: #f8f9fa; }
         .transcript-card { background: white; border-radius: 12px; padding: 1rem; margin-bottom: 1rem;
                            box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
         .transcript-header { display: flex; gap: 1rem; align-items: center; margin-bottom: 0.5rem;
@@ -68,15 +56,14 @@ HTML_TEMPLATE = Template("""<!DOCTYPE html>
         .badge { background: #0f3460; color: white; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.75rem; }
         .time { color: #999; font-size: 0.8rem; }
         .empty { text-align: center; padding: 3rem; color: #999; }
-        @media (max-width: 768px) { .stats { flex-direction: column; } table { font-size: 0.75rem; }
-            th, td { padding: 0.5rem; } }
+        @media (max-width: 768px) { .stats { flex-direction: column; } }
     </style>
 </head>
 <body>
     <div class="header">
         $test_banner
         <h1>The Doctor -- Dashboard</h1>
-        <p>Health tracking for audio notes -- transcripts and extracted data</p>
+        <p>Audio note transcripts -- raw transcription with Urdu/English translation</p>
     </div>
 
     <div class="stats">
@@ -85,38 +72,14 @@ HTML_TEMPLATE = Template("""<!DOCTYPE html>
             <div class="label">Total Audio Notes</div>
         </div>
         <div class="stat-card">
-            <div class="number">$total_entries</div>
-            <div class="label">Health Entries</div>
-        </div>
-        <div class="stat-card">
             <div class="number" style="font-size:1rem">$last_update</div>
             <div class="label">Last Update</div>
         </div>
     </div>
 
     <div class="container">
-        <div class="tab-bar">
-            <button class="tab active" data-tab="health" onclick="switchTab('health')">Health Data</button>
-            <button class="tab" data-tab="transcripts" onclick="switchTab('transcripts')">Raw Transcripts</button>
-        </div>
-
-        <div id="health" class="tab-content active">
-            $health_table
-        </div>
-
-        <div id="transcripts" class="tab-content">
-            $transcript_cards
-        </div>
+        $transcript_cards
     </div>
-
-    <script>
-        function switchTab(name) {
-            document.querySelectorAll('.tab-content').forEach(function(t) { t.classList.remove('active'); });
-            document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
-            document.getElementById(name).classList.add('active');
-            document.querySelector('.tab[data-tab="' + name + '"]').classList.add('active');
-        }
-    </script>
 </body>
 </html>
 """)
@@ -125,9 +88,8 @@ HTML_TEMPLATE = Template("""<!DOCTYPE html>
 # ── Data Loading ─────────────────────────────────────────────────────
 
 def load_data():
-    """Load transcripts and health data."""
+    """Load transcripts from the data file."""
     transcripts = []
-    health_data = []
     
     if TRANSCRIPT_FILE.exists():
         with open(TRANSCRIPT_FILE, "r") as f:
@@ -136,57 +98,25 @@ def load_data():
             except json.JSONDecodeError:
                 transcripts = []
     
-    if HEALTH_DATA_FILE.exists():
-        with open(HEALTH_DATA_FILE, "r") as f:
-            try:
-                data = json.load(f)
-                health_data = data if isinstance(data, list) else [data]
-            except json.JSONDecodeError:
-                health_data = []
-    
-    return transcripts, health_data
+    return transcripts
 
 
-def build_health_table(health_data):
-    """Build HTML table rows from health data."""
-    if not health_data:
-        return '<div class="empty">No health data yet. Send an audio note to get started.</div>'
-    
-    rows = ""
-    for entry in reversed(health_data[-50:]):
-        rows += "<tr>"
-        rows += "<td>" + str(entry.get('id', '-')) + "</td>"
-        rows += "<td>" + str(entry.get('recording_time', '-')) + "</td>"
-        rows += "<td>" + str(entry.get('blood_sugar', '-')) + "</td>"
-        rows += "<td>" + str(entry.get('meals', '-')) + "</td>"
-        rows += "<td>" + str(entry.get('activity', '-')) + "</td>"
-        rows += "<td>" + str(entry.get('medications', '-')) + "</td>"
-        rows += "<td>" + str(entry.get('symptoms', '-')) + "</td>"
-        rows += "<td>" + str(entry.get('mood', '-')) + "</td>"
-        rows += "<td>" + str(entry.get('summary', ''))[:80] + "</td>"
-        rows += "</tr>"
-    
-    return (
-        '<div style="overflow-x:auto">'
-        '<table><thead><tr>'
-        '<th>#</th><th>Recording Time</th><th>Blood Sugar</th><th>Meals</th><th>Activity</th>'
-        '<th>Medications</th><th>Symptoms</th><th>Mood</th><th>Summary</th>'
-        '</tr></thead><tbody>' + rows + '</tbody></table>'
-        '</div>'
-    )
+
 
 
 def build_transcript_cards(transcripts):
-    """Build HTML transcript cards."""
+    """Build HTML transcript cards showing raw transcription, Urdu, and English."""
     if not transcripts:
         return '<div class="empty">No transcripts yet. Send an audio note to get started.</div>'
     
     cards = ""
-    for t in reversed(transcripts[-20:]):
-        raw = str(t.get("raw_response", ""))[:300]
+    for t in reversed(transcripts[-50:]):
         tid = str(t.get('id', '-'))
         rtime = str(t.get('recording_time', '-'))
         ptime = str(t.get('processed_at', ''))[:19]
+        transcription = str(t.get('transcription', ''))
+        translated_urdu = str(t.get('translated_urdu', ''))
+        translated_english = str(t.get('translated_english', ''))
         
         cards += '<div class="transcript-card">'
         cards += '<div class="transcript-header">'
@@ -194,7 +124,12 @@ def build_transcript_cards(transcripts):
         cards += '<span>' + rtime + '</span>'
         cards += '<span class="time">' + ptime + '</span>'
         cards += '</div>'
-        cards += '<pre>' + raw + ('...' if len(str(t.get('raw_response', ''))) > 300 else '') + '</pre>'
+        cards += '<h3 style="margin: 0.5rem 0 0.25rem; font-size: 0.9rem; color: #333;">Raw Transcription</h3>'
+        cards += '<pre>' + transcription + '</pre>'
+        cards += '<h3 style="margin: 0.5rem 0 0.25rem; font-size: 0.9rem; color: #333;">Urdu Translation</h3>'
+        cards += '<pre>' + translated_urdu + '</pre>'
+        cards += '<h3 style="margin: 0.5rem 0 0.25rem; font-size: 0.9rem; color: #333;">English Translation</h3>'
+        cards += '<pre>' + translated_english + '</pre>'
         cards += '</div>'
     
     return '<div class="transcripts-list">' + cards + '</div>'
@@ -205,10 +140,9 @@ def build_transcript_cards(transcripts):
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
     """Main dashboard page."""
-    transcripts, health_data = load_data()
+    transcripts = load_data()
     
     total_notes = len(transcripts)
-    total_entries = len(health_data)
     last_update = str(transcripts[-1].get('processed_at', '')[:10]) if transcripts else "No data yet"
     
     test_banner_html = (
@@ -219,10 +153,8 @@ async def dashboard():
 
     html = HTML_TEMPLATE.substitute(
         total_notes=str(total_notes),
-        total_entries=str(total_entries),
         last_update=last_update,
         test_banner=test_banner_html,
-        health_table=build_health_table(health_data),
         transcript_cards=build_transcript_cards(transcripts),
     )
     
@@ -232,8 +164,8 @@ async def dashboard():
 @app.get("/api/data")
 async def api_data():
     """Return raw JSON data."""
-    transcripts, health_data = load_data()
-    return {"transcripts": transcripts[-20:], "health_data": health_data[-50:]}
+    transcripts = load_data()
+    return {"transcripts": transcripts[-50:]}
 
 
 if __name__ == "__main__":
