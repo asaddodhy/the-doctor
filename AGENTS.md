@@ -1,5 +1,13 @@
 # AGENTS.md — The Doctor
 
+> **IMPORTANT — Read this first.** The full voice pipeline (Groq STT → Perplexity medical extraction → save → reply → thread delete) is already implemented in `processor.py` and `telegram_listener.py`. Michael-Macbook14 built and tested this. **Do NOT change the pipeline logic.** Your job is to:
+> 1. Read and understand the code + pipeline below
+> 2. Fix bugs if they arise
+> 3. Improve the extraction prompt or add new medical fields as Asad requests
+> 4. Keep the Perplexity API server running (port 8766)
+>
+> If you're unsure about any part of the pipeline, read `processor.py` and `telegram_listener.py` first before making changes.
+
 ## Co-work
 
 All team rules, inbox, communication, and session files live in the `asaddodhy/co-work` repo.
