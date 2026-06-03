@@ -1,12 +1,17 @@
 # AGENTS.md — The Doctor
 
-> **IMPORTANT — Read this first.** The full voice pipeline (Groq STT → Perplexity medical extraction → save → reply → thread delete) is already implemented in `processor.py` and `telegram_listener.py`. Michael-Macbook14 built and tested this. **Do NOT change the pipeline logic.** Your job is to:
+> **IMPORTANT — Read this first.** The full voice pipeline (Groq STT → Perplexity medical extraction → save → reply → thread delete) is already implemented in `processor.py` and `telegram_listener.py`. Michael-Macbook14 built and tested this. **Do NOT change the pipeline logic without asking Asad first.** Your job is to:
 > 1. Read and understand the code + pipeline below
 > 2. Fix bugs if they arise
 > 3. Improve the extraction prompt or add new medical fields as Asad requests
 > 4. Keep the Perplexity API server running (port 8766)
 >
 > If you're unsure about any part of the pipeline, read `processor.py` and `telegram_listener.py` first before making changes.
+>
+> ## 📋 Every session start:
+> 1. **Read `HANDBOOK.md`** — check for new instructions/changes from Michael
+> 2. Mark each entry as `[x]` once you've read it
+> 3. If you find errors or need changes, add an entry in the "Messages from the doctor" section
 
 ## Co-work
 
