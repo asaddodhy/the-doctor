@@ -2,8 +2,8 @@
 The Doctor — Audio Processor
 
 Two-step pipeline:
-  Step 1 — Transcribe via bridge script (same prompt as working setup)
-  Step 2 — (Optional) Extract health data from transcription text
+  Step 1 — Transcribe via Groq Whisper API (fast, reliable)
+  Step 2 — Extract health data from transcription via Perplexity API server
 
 Usage:
   uv run python3 processor.py <audio_file> [--time "2024-01-01 12:00:00"]
@@ -13,12 +13,23 @@ import json
 import os
 import subprocess
 import sys
+import urllib.request
+import urllib.parse
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
 # ── Config ──────────────────────────────────────────────────────────
 
+# Groq Whisper STT
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_API_URL = os.getenv("GROQ_API_URL", "https://api.groq.com/openai/v1/audio/transcriptions")
+GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3")
+
+# Perplexity API server (local FastAPI server on port 8766)
+PERPLEXITY_API_URL = os.getenv("PERPLEXITY_API_URL", "http://127.0.0.1:8766")
+
+# Bridge script (fallback)
 BRIDGE_SCRIPT = os.getenv(
     "DOCTOR_BRIDGE_SCRIPT",
     str(Path.home() / "Documents" / "Development" / "perplexity-stack" / "scripts" / "transcribe.py"),
@@ -38,16 +49,71 @@ HEALTH_DATA_FILE = DATA_DIR / f"{_DATA_PREFIX}health_data.json"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# ── Step 1: Transcription via Bridge Script ─────────────────────────
+# ── Step 1: Transcription via Groq Whisper API ──────────────────────
 
 
 def transcribe(audio_path: str) -> Optional[str]:
     """
-    Call the existing Perplexity bridge script to transcribe an audio file.
-    Uses the EXACT same prompt as the working setup (DEFAULT_PROMPT in transcribe.py).
+    Transcribe audio using Groq Whisper API.
+    Falls back to bridge script if Groq is not configured.
 
     Returns transcription text, or None on failure.
     """
+    # Try Groq first if API key is available
+    if GROQ_API_KEY:
+        return _transcribe_with_groq(audio_path)
+
+    # Fallback to bridge script
+    return _transcribe_with_bridge(audio_path)
+
+
+def _transcribe_with_groq(audio_path: str) -> Optional[str]:
+    """Transcribe via Groq Whisper API (multipart/form-data POST)."""
+    if not os.path.isfile(audio_path):
+        print(f"  ❌ Audio file not found: {audio_path}")
+        return None
+
+    print(f"  🎤 Transcribing with Groq Whisper ({GROQ_STT_MODEL})...")
+    try:
+        import requests
+    except ImportError:
+        print("  ⚠️  requests not installed, falling back to bridge script")
+        return _transcribe_with_bridge(audio_path)
+
+    try:
+        with open(audio_path, "rb") as f:
+            files = {"file": (os.path.basename(audio_path), f, "audio/ogg")}
+            data = {"model": GROQ_STT_MODEL}
+            headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
+
+            resp = requests.post(
+                GROQ_API_URL,
+                headers=headers,
+                files=files,
+                data=data,
+                timeout=60,
+            )
+
+        if resp.status_code != 200:
+            print(f"  ❌ Groq API error (HTTP {resp.status_code}): {resp.text[:200]}")
+            return None
+
+        result = resp.json()
+        text = result.get("text", "").strip()
+        if text:
+            print(f"  ✅ Groq transcription ({len(text)} chars)")
+            return text
+        else:
+            print("  ⚠️  Groq returned empty transcription")
+            return None
+
+    except Exception as e:
+        print(f"  ❌ Groq transcription error: {e}")
+        return None
+
+
+def _transcribe_with_bridge(audio_path: str) -> Optional[str]:
+    """Fallback: transcribe via Perplexity bridge script."""
     if not os.path.isfile(BRIDGE_SCRIPT):
         print(f"  ❌ Bridge script not found: {BRIDGE_SCRIPT}")
         return None
@@ -55,6 +121,7 @@ def transcribe(audio_path: str) -> Optional[str]:
         print(f"  ❌ Bridge Python not found: {BRIDGE_PYTHON}")
         return None
 
+    print(f"  🎤 Transcribing with bridge script (fallback)...")
     cmd = [BRIDGE_PYTHON, BRIDGE_SCRIPT, audio_path]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -79,111 +146,62 @@ def transcribe(audio_path: str) -> Optional[str]:
         return None
 
 
-# ── Step 2: Health Data Extraction (from text, no audio) ────────────
+# ── Step 2: Health Data Extraction (via Perplexity API Server) ──────
 
-HEALTH_EXTRACTION_PROMPT = """You are The Doctor's health data assistant.
-
-A transcription from my father's health audio note is provided below.
-Please extract the following structured information:
-
-| Field | Value | Notes |
-|-------|-------|-------|
-| Recording Time | {recording_time} | When the audio was sent |
-| Mentioned Time |  | Any specific time mentioned in the note |
-| Blood Sugar Level |  | If mentioned (e.g., 120 mg/dL) |
-| Meals / Food |  | What was eaten, when |
-| Physical Activity |  | Any exercise, walking, etc. |
-| Medications |  | Any medicines taken |
-| Symptoms |  | Any health complaints |
-| Mood / Energy |  | How they're feeling |
-| Other Notes |  | Anything else important |
-
-Return your response in this JSON format:
-{{
-  "raw_transcript_english": "the transcription",
-  "extracted_data": {{
-    "recording_time": "...",
-    "mentioned_time": "...",
-    "blood_sugar": "...",
-    "meals": "...",
-    "activity": "...",
-    "medications": "...",
-    "symptoms": "...",
-    "mood": "...",
-    "other_notes": "..."
-  }},
-  "summary": "One-line summary of the note"
-}}
-"""
+HEALTH_EXTRACTION_PROMPT = """Extract any medical data from this voice note: blood sugar values, food eaten, exercise, time of day, medications, symptoms, and any other health metrics. Return the data as structured JSON."""
 
 
 def extract_health(transcription: str, recording_time: str) -> dict:
     """
-    Send the transcription text to Perplexity for health data extraction.
-    Uses the same MCP client (no audio, just text).
+    Send the transcription text to the Perplexity API server for health data extraction.
+    Uses the local FastAPI server at PERPLEXITY_API_URL.
     """
-    # Add perplexity-web-wrapper to path
-    WRAPPER_PATH = Path.home() / "Documents" / "Development" / "perplexity-stack" / "perplexity-web-wrapper"
-    sys.path.insert(0, str(WRAPPER_PATH))
+    import urllib.request
+    import urllib.parse
 
-    COOKIES_PATH = Path.home() / ".config" / "perplexity" / "cookies.json"
+    query = f"{HEALTH_EXTRACTION_PROMPT}\n\n{transcription}"
 
-    from perplexity_subscription_mcp import client as perplexity
-
-    cookies = {}
-    if COOKIES_PATH.exists():
-        with open(COOKIES_PATH, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-        cookies = perplexity.normalize_cookies(raw)
-
-    perp_client = perplexity.Client(cookies)
-
-    prompt = HEALTH_EXTRACTION_PROMPT.format(recording_time=recording_time)
-    full_prompt = (
-        f"Here is a transcription of my father's health audio note:\n\n"
-        f"{transcription}\n\n---\n\n{prompt}"
-    )
-
-    print("  📤 Extracting health data from transcription...")
+    print("  📤 Extracting health data via Perplexity API server...")
     try:
-        result = perp_client.search(
-            query=full_prompt,
-            mode="pro",
-            model="sonar",
-            stream=False,
-        )
+        # Build URL with query params
+        params = urllib.parse.urlencode({
+            "q": query,
+            "answer_only": "true",
+            "mode": "auto",
+        })
+        url = f"{PERPLEXITY_API_URL}/api/query_sync?{params}"
 
-        # Parse response — result can be dict with "answer" or "text" (list of steps)
-        response_text = ""
-        if isinstance(result, dict):
-            answer = result.get("answer")
-            if isinstance(answer, str) and len(answer) > 10:
-                response_text = answer
-            else:
-                # Iterate through text steps to find FINAL answer
-                text_steps = result.get("text", [])
-                if isinstance(text_steps, list):
-                    for step in text_steps:
-                        if isinstance(step, dict) and step.get("step_type") == "FINAL":
-                            content = step.get("content", {})
-                            step_answer = content.get("answer") or content.get("text") or ""
-                            if isinstance(step_answer, str) and len(step_answer) > 10:
-                                response_text = step_answer
-                                break
-                if not response_text:
-                    response_text = json.dumps(result)
-        elif isinstance(result, str):
-            response_text = result
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+        answer = data.get("answer", "")
+        thread_uuid = data.get("backend_uuid")
+
+        if answer:
+            print(f"  ✅ Health data extracted ({len(answer)} chars)")
         else:
-            response_text = str(result)
+            print("  ⚠️  Perplexity returned empty answer")
+            answer = json.dumps(data, indent=2)
 
-        # Try to extract JSON from response
-        extracted = _try_extract_json(response_text)
+        # Parse JSON from answer (may be wrapped in markdown code block)
+        extracted = _try_extract_json(answer)
+
+        # Delete the Perplexity thread to keep history clean
+        if thread_uuid:
+            try:
+                delete_url = f"{PERPLEXITY_API_URL}/api/threads/{thread_uuid}"
+                delete_req = urllib.request.Request(delete_url, method="DELETE")
+                urllib.request.urlopen(delete_req, timeout=30)
+                print(f"  🗑️ Deleted Perplexity thread: {thread_uuid}")
+            except Exception as del_err:
+                print(f"  ⚠️  Failed to delete thread {thread_uuid}: {del_err}")
+
         return extracted
 
     except Exception as e:
         print(f"  ❌ Health extraction failed: {e}")
-        return {"raw_text": transcription[:500]}
+        return {"raw_text": transcription[:500], "extracted_data": {}}
 
 
 def _try_extract_json(text: str) -> dict:

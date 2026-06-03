@@ -23,6 +23,7 @@ DASHBOARD_PORT="${DOCTOR_DASHBOARD_PORT:-9001}"
 SERVICES=(
     "dashboard:uv run python3 -u dashboard/app.py:logs/dashboard.log:${DASHBOARD_PORT}"
     "whatsapp:node whatsapp/listener.mjs:logs/whatsapp.log:whatsapp"
+    "perplexity-api:bash start-perplexity-api.sh:logs/perplexity-api.log:perplexity-api"
     "telegram:uv run python3 -u telegram_listener.py:logs/telegram.log:telegram"
 )
 

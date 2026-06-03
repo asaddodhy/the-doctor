@@ -12,7 +12,6 @@ Runs as a long-lived daemon alongside the dashboard.
 """
 
 import os
-import subprocess
 import sys
 import tempfile
 from datetime import datetime
@@ -21,8 +20,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-# ffmpeg available for audio conversion
-FFMPEG = "ffmpeg"
+# Groq Whisper handles OGG directly (no conversion needed)
 
 # ── Add The Doctor's root to sys.path ───────────────────────────────────
 PROJECT_ROOT = Path(__file__).parent
@@ -48,49 +46,13 @@ BOT_TOKEN = os.getenv("DOCTOR_BOT_TOKEN", "")
 ALLOWED_USERS_STR = os.getenv("DOCTOR_ALLOWED_USERS", "")
 ALLOWED_USERS = {int(uid.strip()) for uid in ALLOWED_USERS_STR.split(",") if uid.strip()}
 
-# Path to the existing bridge script
-BRIDGE_SCRIPT = os.getenv(
-    "DOCTOR_BRIDGE_SCRIPT",
-    str(Path.home() / "Documents" / "Development" / "perplexity-stack" / "scripts" / "transcribe.py"),
-)
-BRIDGE_PYTHON = os.getenv(
-    "DOCTOR_BRIDGE_PYTHON",
-    str(Path.home() / "Documents" / "Development" / "perplexity-stack" / "perplexity-web-wrapper" / ".venv" / "bin" / "python3"),
-)
-
-# ─── Audio Conversion ─────────────────────────────────────────────────
-
-
-def convert_to_wav(audio_path: str) -> Optional[str]:
-    """
-    Convert audio file to WAV format using ffmpeg.
-    Perplexity's GPT-4.5 model works with WAV but not OGG (Telegram's format).
-    Returns path to converted WAV file, or None on failure.
-    """
-    wav_path = audio_path.rsplit(".", 1)[0] + "_converted.wav"
-    try:
-        result = subprocess.run(
-            [FFMPEG, "-y", "-i", audio_path, "-acodec", "pcm_s16le",
-             "-ar", "16000", "-ac", "1", wav_path],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode != 0:
-            print(f"  ⚠️  Audio conversion failed: {result.stderr.strip()}")
-            return None
-        print(f"  🔄 Converted to WAV: {wav_path}")
-        return wav_path
-    except Exception as e:
-        print(f"  ⚠️  Audio conversion error: {e}")
-        return None
-
-
-# ─── Bridge Script Call ─────────────────────────────────────────────────
+# ─── Transcription via Groq Whisper ────────────────────────────────────
 
 
 def transcribe_audio(audio_path: str) -> Optional[str]:
     """
-    Transcribe audio via the bridge script.
-    Delegates to processor.transcribe() which uses the working setup.
+    Transcribe audio using Groq Whisper API via processor.
+    Falls back to bridge script if Groq is not configured.
     """
     return processor_transcribe(audio_path)
 
@@ -212,13 +174,9 @@ def start_bot():
 
             print(f"  💾 Downloaded to: {tmp_path} ({os.path.getsize(tmp_path)} bytes)")
 
-            # Step 0: Convert OGG to WAV (Perplexity GPT-4.5 doesn't support OGG)
-            wav_path = convert_to_wav(tmp_path)
-            audio_for_transcription = wav_path if wav_path else tmp_path
-
-            # Step 1: Transcribe via bridge script
+            # Step 1: Transcribe via Groq Whisper (handles OGG directly)
             await update.message.reply_text("🎤 Transcribing audio...")
-            transcription = transcribe_audio(audio_for_transcription)
+            transcription = transcribe_audio(tmp_path)
 
             if not transcription:
                 await update.message.reply_text("❌ Transcription failed. Check server logs.")
@@ -228,19 +186,42 @@ def start_bot():
             print(f"  ✅ Transcription ({len(transcription)} chars)")
             print(f"     Preview: {transcription[:200]}...")
 
-            # Step 2: Save transcript and reply with transcription text
-            # (Health extraction disabled for now — testing transcription quality first)
+            # Step 2: Extract health data and save
             filename = f"voice_{update.message.message_id}.ogg"
-            save_results(filename, recording_time, transcription, {})
+            await update.message.reply_text("🔍 Extracting health data...")
+            extracted = extract_health_from_transcription(transcription, recording_time)
+            save_results(filename, recording_time, transcription, extracted)
 
-            # Reply with the transcription
+            # Reply with the transcription and health data
             preview = transcription[:1500]
             response = f"✅ Transcription:\n\n{preview}"
             if len(transcription) > 1500:
                 response += "\n\n*(truncated — full text saved to dashboard)*"
+
+            # Add health data summary if available
+            if extracted and "extracted_data" in extracted:
+                ed = extracted["extracted_data"]
+                summary_lines = []
+                if ed.get("blood_sugar"):
+                    summary_lines.append(f"🩸 Blood Sugar: {ed['blood_sugar']}")
+                if ed.get("meals"):
+                    summary_lines.append(f"🍽️ Meals: {ed['meals']}")
+                if ed.get("activity"):
+                    summary_lines.append(f"🚶 Activity: {ed['activity']}")
+                if ed.get("medications"):
+                    summary_lines.append(f"💊 Medications: {ed['medications']}")
+                if ed.get("symptoms"):
+                    summary_lines.append(f"🤒 Symptoms: {ed['symptoms']}")
+                if ed.get("mood"):
+                    summary_lines.append(f"😊 Mood: {ed['mood']}")
+                if summary_lines:
+                    response += f"\n\n📋 **Health Data:**\n" + "\n".join(summary_lines)
+                if extracted.get("summary"):
+                    response += f"\n\n📝 {extracted['summary']}"
+
             dashboard_port = os.getenv("DOCTOR_DASHBOARD_PORT", "9001")
             response += f"\n\n📊 Dashboard: http://localhost:{dashboard_port}"
-            await update.message.reply_text(response)
+            await update.message.reply_text(response, parse_mode="Markdown")
 
             print(f"  ✅ Voice note processed successfully")
 
@@ -251,8 +232,6 @@ def start_bot():
         finally:
             if "tmp_path" in locals():
                 cleanup(tmp_path)
-            if "wav_path" in locals() and wav_path:
-                cleanup(wav_path)
 
     def cleanup(path):
         """Remove temp file."""
