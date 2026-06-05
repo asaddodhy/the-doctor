@@ -11,7 +11,6 @@ Usage:
 
 import json
 import os
-import subprocess
 import sys
 import urllib.request
 import urllib.parse
@@ -29,16 +28,6 @@ GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3")
 # Perplexity API server (local FastAPI server on port 8001)
 PERPLEXITY_API_URL = os.getenv("PERPLEXITY_API_URL", "http://127.0.0.1:8001")
 
-# Bridge script (fallback)
-BRIDGE_SCRIPT = os.getenv(
-    "DOCTOR_BRIDGE_SCRIPT",
-    str(Path.home() / "Documents" / "Development" / "perplexity-stack" / "scripts" / "transcribe.py"),
-)
-BRIDGE_PYTHON = os.getenv(
-    "DOCTOR_BRIDGE_PYTHON",
-    str(Path.home() / "Documents" / "Development" / "perplexity-stack" / "perplexity-web-wrapper" / ".venv" / "bin" / "python3"),
-)
-
 DATA_DIR = Path(__file__).parent / "data"
 
 DOCTOR_ENV = os.getenv("DOCTOR_ENV", "")
@@ -54,17 +43,11 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 def transcribe(audio_path: str) -> Optional[str]:
     """
-    Transcribe audio using Groq Whisper API.
-    Falls back to bridge script if Groq is not configured.
-
+    Transcribe audio using Groq Whisper API (only method).
     Returns transcription text, or None on failure.
+    Error details are shown to the user — no silent fallback.
     """
-    # Try Groq first if API key is available
-    if GROQ_API_KEY:
-        return _transcribe_with_groq(audio_path)
-
-    # Fallback to bridge script
-    return _transcribe_with_bridge(audio_path)
+    return _transcribe_with_groq(audio_path)
 
 
 def _transcribe_with_groq(audio_path: str) -> Optional[str]:
@@ -113,56 +96,36 @@ def _transcribe_with_groq(audio_path: str) -> Optional[str]:
         return None
 
 
-def _transcribe_with_bridge(audio_path: str) -> Optional[str]:
-    """Fallback: transcribe via Perplexity bridge script."""
-    if not os.path.isfile(BRIDGE_SCRIPT):
-        print(f"  ❌ Bridge script not found: {BRIDGE_SCRIPT}")
-        return None
-    if not os.path.isfile(BRIDGE_PYTHON):
-        print(f"  ❌ Bridge Python not found: {BRIDGE_PYTHON}")
-        return None
+# ── Step 2: Transcription Translation (via Perplexity API Server) ────
 
-    print(f"  🎤 Transcribing with bridge script (fallback)...")
-    cmd = [BRIDGE_PYTHON, BRIDGE_SCRIPT, audio_path]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    except subprocess.TimeoutExpired:
-        print("  ❌ Bridge script timed out after 120s")
-        return None
+TRANSLATION_PROMPT = """You are a bilingual medical transcription assistant. A patient has sent a voice note in Urdu/Hindi mixed with some English. Below is the raw transcription from speech-to-text.
 
-    if result.returncode != 0:
-        print(f"  ❌ Bridge script failed (exit {result.returncode}): {result.stderr.strip()}")
-        return None
+Please provide:
+1. A clean Urdu version in proper Urdu script (اردو)
+2. An English translation
 
-    try:
-        data = json.loads(result.stdout)
-        text = data.get("text", "")
-        if text:
-            return text
-        print("  ⚠️  Bridge returned empty transcription")
-        return None
-    except json.JSONDecodeError as e:
-        print(f"  ❌ Bridge output not valid JSON: {e}")
-        print(f"     stdout: {result.stdout[:200]}")
-        return None
+IMPORTANT: Return ONLY valid JSON in this exact format with no extra text:
+{
+  "urdu": "clean urdu text here in urdu script",
+  "english": "english translation here"
+}
+
+Raw transcription:
+"""
 
 
-# ── Step 2: Health Data Extraction (via Perplexity API Server) ──────
-
-HEALTH_EXTRACTION_PROMPT = """Extract any medical data from this voice note: blood sugar values, food eaten, exercise, time of day, medications, symptoms, and any other health metrics. Return the data as structured JSON."""
-
-
-def extract_health(transcription: str, recording_time: str) -> dict:
+def translate_transcription(transcription: str) -> dict:
     """
-    Send the transcription text to the Perplexity API server for health data extraction.
+    Send the transcription text to the Perplexity API server for Urdu + English translation.
     Uses the local FastAPI server at PERPLEXITY_API_URL.
+    Returns dict with 'urdu' and 'english' keys.
     """
     import urllib.request
     import urllib.parse
 
-    query = f"{HEALTH_EXTRACTION_PROMPT}\n\n{transcription}"
+    query = f"{TRANSLATION_PROMPT}\n\n{transcription}"
 
-    print("  📤 Extracting health data via Perplexity API server...")
+    print("  📤 Translating transcription via Perplexity API server...")
     try:
         # Build URL with query params
         params = urllib.parse.urlencode({
@@ -180,13 +143,13 @@ def extract_health(transcription: str, recording_time: str) -> dict:
         thread_uuid = data.get("backend_uuid")
 
         if answer:
-            print(f"  ✅ Health data extracted ({len(answer)} chars)")
+            print(f"  ✅ Translation received ({len(answer)} chars)")
         else:
             print("  ⚠️  Perplexity returned empty answer")
-            answer = json.dumps(data, indent=2)
+            return {"urdu": "", "english": "", "error": "Perplexity server returned an empty response."}
 
         # Parse JSON from answer (may be wrapped in markdown code block)
-        extracted = _try_extract_json(answer)
+        translated = _try_extract_json(answer)
 
         # Delete the Perplexity thread to keep history clean
         if thread_uuid:
@@ -198,11 +161,19 @@ def extract_health(transcription: str, recording_time: str) -> dict:
             except Exception as del_err:
                 print(f"  ⚠️  Failed to delete thread {thread_uuid}: {del_err}")
 
-        return extracted
+        # Ensure we have the expected keys
+        if "urdu" not in translated and "english" not in translated:
+            # If JSON didn't have the right keys, server returned unexpected format
+            return {"urdu": "", "english": "", "error": "Perplexity server returned an unexpected response."}
+
+        return {
+            "urdu": translated.get("urdu", ""),
+            "english": translated.get("english", transcription),
+        }
 
     except Exception as e:
-        print(f"  ❌ Health extraction failed: {e}")
-        return {"raw_text": transcription[:500], "extracted_data": {}}
+        print(f"  ❌ Translation failed: {e}")
+        return {"urdu": "", "english": "", "error": f"Perplexity server is not responding ({type(e).__name__})."}
 
 
 def _try_extract_json(text: str) -> dict:
@@ -217,7 +188,7 @@ def _try_extract_json(text: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # Try to find JSON object
+    # Try to find JSON object with urdu and english keys
     json_match = re.search(r"\{[^{}]*\}", text, re.DOTALL)
     if json_match:
         try:
@@ -225,7 +196,7 @@ def _try_extract_json(text: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    return {"raw_text": text[:500]}
+    return {"urdu": "", "english": text[:500]}
 
 
 # ── Data Storage ─────────────────────────────────────────────────────
@@ -251,7 +222,7 @@ def save_json(path, data):
 
 
 def process_audio(audio_path: str, recording_time: Optional[str] = None,
-                  extract_health_data: bool = True) -> dict:
+                  translate: bool = True) -> dict:
     """
     Full pipeline: transcribe + optionally extract health data.
 
@@ -276,7 +247,7 @@ def process_audio(audio_path: str, recording_time: Optional[str] = None,
     print(f"{'='*60}\n")
 
     # ── Step 1: Transcribe ──
-    print("▸ Step 1: Transcribing audio (via bridge script)...")
+    print("▸ Step 1: Transcribing audio (via Groq Whisper)...")
     transcription = transcribe(str(audio_file))
 
     if not transcription:
@@ -302,36 +273,18 @@ def process_audio(audio_path: str, recording_time: Optional[str] = None,
     transcripts.append(transcript_entry)
     save_json(TRANSCRIPT_FILE, transcripts)
 
-    # ── Step 2: Extract health data (optional) ──
-    extracted = {}
-    if extract_health_data:
-        print("\n▸ Step 2: Extracting health data from transcription...")
-        extracted = extract_health(transcription, recording_time)
-
-        if extracted and "extracted_data" in extracted:
-            health_data = load_json(HEALTH_DATA_FILE)
-            if isinstance(health_data, dict):
-                entries = [health_data] if health_data else []
-            else:
-                entries = health_data
-
-            entry = {
-                "id": len(entries) + 1,
-                "recording_time": recording_time,
-                "processed_at": datetime.now().isoformat(),
-                **extracted.get("extracted_data", {}),
-                "summary": extracted.get("summary", ""),
-                "raw_transcript": extracted.get("raw_transcript_english", transcription),
-            }
-            entries.append(entry)
-            save_json(HEALTH_DATA_FILE, entries)
+    # ── Step 2: Translate to Urdu + English (optional) ──
+    translated = {}
+    if translate:
+        print("\n▸ Step 2: Translating transcription to Urdu + English...")
+        translated = translate_transcription(transcription)
 
     return {
         "success": True,
         "filename": audio_file.name,
         "recording_time": recording_time,
         "transcription": transcription,
-        "extracted": extracted,
+        "translated": translated,
     }
 
 
@@ -343,16 +296,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="The Doctor — Process health audio notes")
     parser.add_argument("audio_file", help="Path to the audio file")
     parser.add_argument("--time", "-t", help="Recording time (default: now)", default=None)
-    parser.add_argument("--no-extract", action="store_true",
-                        help="Skip health data extraction (transcription only)")
+    parser.add_argument("--no-translate", action="store_true",
+                        help="Skip translation (transcription only)")
 
     args = parser.parse_args()
-    result = process_audio(args.audio_file, args.time, extract_health_data=not args.no_extract)
+    result = process_audio(args.audio_file, args.time, translate=not args.no_translate)
 
     if result["success"]:
         print(f"\n✅ Processing complete!")
         print(f"📄 Transcript saved to: {TRANSCRIPT_FILE}")
-        if result.get("extracted") and result["extracted"].get("extracted_data"):
-            print(f"📊 Health data saved to: {HEALTH_DATA_FILE}")
+        if result.get("translated"):
+            print(f"  🔤 Urdu: {result['translated'].get('urdu', '')[:80]}...")
+            print(f"  🔤 English: {result['translated'].get('english', '')[:80]}...")
     else:
         print(f"\n❌ Processing failed: {result.get('error', 'Unknown error')}")

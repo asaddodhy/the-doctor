@@ -1,9 +1,8 @@
 """
 The Doctor — Telegram Voice Listener
 
-Receives voice notes from authorized Telegram users, transcribes via the
-existing Perplexity bridge script (perplexity-stack/scripts/transcribe.py),
-then passes the transcription to The Doctor's health data extraction pipeline.
+Receives voice notes from authorized Telegram users, transcribes via
+Groq Whisper API, then translates to Urdu and English via Perplexity.
 
 Usage:
     python telegram_listener.py
@@ -20,25 +19,10 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-# Groq Whisper handles OGG directly (no conversion needed)
-
-# ── Add The Doctor's root to sys.path ───────────────────────────────────
+# ── Environment MUST be loaded BEFORE importing processor ───────────────
+# processor.py reads env vars at module level (GROQ_API_KEY, etc.)
 PROJECT_ROOT = Path(__file__).parent
-sys.path.insert(0, str(PROJECT_ROOT))
 
-from processor import (
-    DATA_DIR,
-    HEALTH_DATA_FILE,
-    TRANSCRIPT_FILE,
-    transcribe as processor_transcribe,
-    extract_health as processor_extract_health,
-    load_json,
-    save_json,
-)
-
-# ─── Environment ────────────────────────────────────────────────────────
-
-# Load test .env if DOCTOR_ENV=test, otherwise load production .env
 _env_file = ".env.test" if os.getenv("DOCTOR_ENV", "") == "test" else ".env"
 load_dotenv(PROJECT_ROOT / _env_file)
 print(f"  📋 Loaded config from: {_env_file}")
@@ -46,34 +30,44 @@ BOT_TOKEN = os.getenv("DOCTOR_BOT_TOKEN", "")
 ALLOWED_USERS_STR = os.getenv("DOCTOR_ALLOWED_USERS", "")
 ALLOWED_USERS = {int(uid.strip()) for uid in ALLOWED_USERS_STR.split(",") if uid.strip()}
 
+# ── Now import processor (it will see the env vars from above) ──────────
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from processor import (
+    DATA_DIR,
+    TRANSCRIPT_FILE,
+    GROQ_STT_MODEL,
+    transcribe as processor_transcribe,
+    translate_transcription as processor_translate,
+    load_json,
+    save_json,
+)
+
 # ─── Transcription via Groq Whisper ────────────────────────────────────
 
 
 def transcribe_audio(audio_path: str) -> Optional[str]:
-    """
-    Transcribe audio using Groq Whisper API via processor.
-    Falls back to bridge script if Groq is not configured.
-    """
+    """Transcribe audio using Groq Whisper API via processor."""
     return processor_transcribe(audio_path)
 
 
-# ─── Health Data Extraction from Text ───────────────────────────────────
+# ─── Transcription Translation (Urdu + English) ─────────────────────────
 
 
-def extract_health_from_transcription(transcription: str, recording_time: str) -> dict:
+def translate_transcription_text(transcription: str) -> dict:
     """
-    Extract health data from a transcription.
-    Delegates to processor.extract_health() which uses the working setup.
+    Translate transcription to Urdu and English via Perplexity.
+    Delegates to processor.translate_transcription().
     """
-    return processor_extract_health(transcription, recording_time)
+    return processor_translate(transcription)
 
 
 # ─── Save Results ────────────────────────────────────────────────────────
 
 
-def save_results(filename: str, recording_time: str, transcription: str, extracted: dict):
-    """Save transcription and extracted health data to storage."""
-    # Save transcript
+def save_results(filename: str, recording_time: str, transcription: str, translated: dict):
+    """Save transcription and translated text to storage."""
+    # Save transcript with translations
     transcripts = load_json(TRANSCRIPT_FILE)
     transcript_entry = {
         "id": len(transcripts) + 1,
@@ -82,29 +76,11 @@ def save_results(filename: str, recording_time: str, transcription: str, extract
         "recording_time": recording_time,
         "processed_at": datetime.now().isoformat(),
         "transcription": transcription,
+        "translated_urdu": translated.get("urdu", ""),
+        "translated_english": translated.get("english", ""),
     }
     transcripts.append(transcript_entry)
     save_json(TRANSCRIPT_FILE, transcripts)
-
-    # Save extracted health data
-    if extracted and "extracted_data" in extracted:
-        health_data = load_json(HEALTH_DATA_FILE)
-        if isinstance(health_data, dict):
-            entries = [health_data] if health_data else []
-        else:
-            entries = health_data
-
-        entry = {
-            "id": len(entries) + 1,
-            "source": "telegram",
-            "recording_time": recording_time,
-            "processed_at": datetime.now().isoformat(),
-            **extracted.get("extracted_data", {}),
-            "summary": extracted.get("summary", ""),
-            "raw_transcript": extracted.get("raw_transcript_english", transcription),
-        }
-        entries.append(entry)
-        save_json(HEALTH_DATA_FILE, entries)
 
 
 # ─── Telegram Bot Handler ────────────────────────────────────────────────
@@ -185,42 +161,31 @@ def start_bot():
             print(f"  ✅ Transcription ({len(transcription)} chars)")
             print(f"     Preview: {transcription[:200]}...")
 
-            # Step 2: Extract health data and save
+            # Step 2: Translate to Urdu + English via Perplexity
             filename = f"voice_{update.message.message_id}.ogg"
-            await update.message.reply_text("🔍 Extracting health data...")
-            extracted = extract_health_from_transcription(transcription, recording_time)
-            save_results(filename, recording_time, transcription, extracted)
+            await update.message.reply_text("🌐 Translating to Urdu and English...")
+            translated = translate_transcription_text(transcription)
+            save_results(filename, recording_time, transcription, translated)
 
-            # Reply with the transcription and health data
-            preview = transcription[:1500]
-            response = f"✅ Transcription:\n\n{preview}"
-            if len(transcription) > 1500:
-                response += "\n\n*(truncated — full text saved to dashboard)*"
+            # Check if translation failed
+            error_msg = translated.get("error", "")
+            if error_msg:
+                response = f"📝 **Transcription:**\n\n{transcription}\n\n⚠️ **Translation unavailable:** {error_msg}\n\nWant me to restart the Perplexity server? (send 'restart')"
+                await update.message.reply_text(response, parse_mode="Markdown")
+            else:
+                # Reply with Urdu and English versions
+                urdu_text = translated.get("urdu", "") or ""
+                english_text = translated.get("english", "") or transcription
 
-            # Add health data summary if available
-            if extracted and "extracted_data" in extracted:
-                ed = extracted["extracted_data"]
-                summary_lines = []
-                if ed.get("blood_sugar"):
-                    summary_lines.append(f"🩸 Blood Sugar: {ed['blood_sugar']}")
-                if ed.get("meals"):
-                    summary_lines.append(f"🍽️ Meals: {ed['meals']}")
-                if ed.get("activity"):
-                    summary_lines.append(f"🚶 Activity: {ed['activity']}")
-                if ed.get("medications"):
-                    summary_lines.append(f"💊 Medications: {ed['medications']}")
-                if ed.get("symptoms"):
-                    summary_lines.append(f"🤒 Symptoms: {ed['symptoms']}")
-                if ed.get("mood"):
-                    summary_lines.append(f"😊 Mood: {ed['mood']}")
-                if summary_lines:
-                    response += f"\n\n📋 **Health Data:**\n" + "\n".join(summary_lines)
-                if extracted.get("summary"):
-                    response += f"\n\n📝 {extracted['summary']}"
+                response = "📝 **Transcription:**\n\n"
+                if urdu_text:
+                    response += f"**🇵🇰 Urdu:**\n{urdu_text}\n\n"
+                response += f"**🇬🇧 English:**\n{english_text}"
 
-            dashboard_port = os.getenv("DOCTOR_DASHBOARD_PORT", "9001")
-            response += f"\n\n📊 Dashboard: http://localhost:{dashboard_port}"
-            await update.message.reply_text(response, parse_mode="Markdown")
+                if len(response) > 4000:
+                    response = response[:3997] + "..."
+
+                await update.message.reply_text(response, parse_mode="Markdown")
 
             print(f"  ✅ Voice note processed successfully")
 
