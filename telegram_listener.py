@@ -167,25 +167,24 @@ def start_bot():
             translated = translate_transcription_text(transcription)
             save_results(filename, recording_time, transcription, translated)
 
-            # Check if translation failed
+            # Build response — always show raw transcription first
             error_msg = translated.get("error", "")
+            response = f"📝 **Raw Transcription:**\n{transcription}\n"
+
             if error_msg:
-                response = f"📝 **Transcription:**\n\n{transcription}\n\n⚠️ **Translation unavailable:** {error_msg}\n\nWant me to restart the Perplexity server? (send 'restart')"
-                await update.message.reply_text(response, parse_mode="Markdown")
+                response += f"\n⚠️ **Translation unavailable:** {error_msg}\n\nSend 'restart' to restart the Perplexity server."
             else:
-                # Reply with Urdu and English versions
                 urdu_text = translated.get("urdu", "") or ""
                 english_text = translated.get("english", "") or transcription
 
-                response = "📝 **Transcription:**\n\n"
                 if urdu_text:
-                    response += f"**🇵🇰 Urdu:**\n{urdu_text}\n\n"
-                response += f"**🇬🇧 English:**\n{english_text}"
+                    response += f"\n**🇵🇰 Urdu:**\n{urdu_text}\n"
+                response += f"\n**🇬🇧 English:**\n{english_text}"
 
-                if len(response) > 4000:
-                    response = response[:3997] + "..."
+            if len(response) > 4000:
+                response = response[:3997] + "..."
 
-                await update.message.reply_text(response, parse_mode="Markdown")
+            await update.message.reply_text(response, parse_mode="Markdown")
 
             print(f"  ✅ Voice note processed successfully")
 
